@@ -143,27 +143,30 @@ def paragrafos(segmentos):
 
 
 def transcrever_um(client, video, out_dir, prompt):
+    if not video.exists():
+        log(f"ERRO: arquivo nao encontrado: {video}")
+        return True, False
     out_dir.mkdir(parents=True, exist_ok=True)
     out_txt = out_dir / "transcricao.txt"
     if out_txt.exists() and out_txt.stat().st_size > 0:
         log(f"{video.name}: ja transcrita, pulando")
-        return True
+        return True, True
     log(f"{video.name} ...")
     t0 = time.time()
     try:
         duracao, segs = transcrever_video(client, video, prompt)
     except LimiteDiario as e:
         log(f"PARADO: {e}. Rode de novo depois, ele retoma daqui.")
-        return False
+        return False, False
     except Exception as e:
         log(f"    ERRO: {e}")
-        return True
+        return True, False
     if not segs:
         log("    ERRO: nenhum segmento")
-        return True
+        return True, False
     out_txt.write_text(paragrafos(segs), encoding="utf-8")
     log(f"    OK, {duracao/60:.1f} min de video em {time.time()-t0:.0f}s")
-    return True
+    return True, True
 
 
 def main():
@@ -184,20 +187,28 @@ def main():
     client = Groq(api_key=os.environ["GROQ_API_KEY"], max_retries=0)
 
     out = Path(args.out)
+    algum_erro = False
 
     if args.video:
         video = Path(args.video)
-        transcrever_um(client, video, out, args.prompt)
+        continua, sucesso = transcrever_um(client, video, out, args.prompt)
+        if not continua:
+            sys.exit(2)
+        algum_erro = not sucesso
     else:
         src = Path(args.src)
         arquivos = sorted([p for p in src.iterdir() if p.suffix.lower() in EXTENSOES])
         total = len(arquivos)
         for i, video in enumerate(arquivos, 1):
             log(f"[{i}/{total}]")
-            continua = transcrever_um(client, video, out / video.stem, args.prompt)
+            continua, sucesso = transcrever_um(client, video, out / video.stem, args.prompt)
             if not continua:
                 sys.exit(2)
+            algum_erro = algum_erro or not sucesso
 
+    if algum_erro:
+        log("Concluido com erro(s) - confira as mensagens de ERRO acima.")
+        sys.exit(1)
     log("Concluido.")
 
 
